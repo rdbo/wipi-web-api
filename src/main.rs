@@ -1,39 +1,13 @@
-use std::sync::{Arc, Mutex};
+mod api;
+mod service;
 
-use axum::{Router, extract::State, response::IntoResponse, routing::post};
-use time::{Duration, OffsetDateTime, PrimitiveDateTime};
-use uuid::{Timestamp, Uuid};
+use std::sync::Arc;
 
-async fn handler(State(SessionState { session }): State<SessionState>) -> impl IntoResponse {
-    let mut session = session.lock().unwrap();
-    let session_id = Uuid::now_v7();
-    let session_timestamp = session_id
-        .get_timestamp()
-        .expect("UUIDv7 must have a timestamp");
-    let now = {
-        let (secs, _) = session_timestamp.to_unix();
-        OffsetDateTime::from_unix_timestamp(secs as i64).expect("failed to convert timestamp")
-    };
-    let expiration = now + Duration::minutes(15);
-    *session = Some(Session {
-        id: session_id.clone(),
-        creation_datetime: now,
-        expiration_datetime: expiration,
-    });
+use argon2::password_hash::PasswordHashString;
+use axum::{Router, routing::post};
+use chrono::Duration;
 
-    return session_id.to_string();
-}
-
-struct Session {
-    id: Uuid,
-    creation_datetime: OffsetDateTime,
-    expiration_datetime: OffsetDateTime,
-}
-
-#[derive(Clone)]
-struct SessionState {
-    session: Arc<Mutex<Option<Session>>>,
-}
+use crate::service::AuthService;
 
 #[tokio::main]
 async fn main() {
@@ -42,15 +16,22 @@ async fn main() {
         .parse_default_env()
         .init();
 
-    let api = Router::new().route("/login", post(handler));
-    let app = Router::new().nest("/api", api).with_state(SessionState {
-        session: Arc::new(Mutex::new(None)),
-    });
+    let auth_service = AuthService::new(
+        PasswordHashString::new(
+            "$argon2id$v=19$m=16,t=2,p=1$VnExMnQ0VWowbG5jc1NIcQ$mgaySsRJLlCOMzQymUBRzQ",
+        )
+        .expect("failed to parse argon2id hash"),
+        Duration::seconds(15),
+    );
 
+    let api = Router::new().route("/login", post(api::login::post));
+    let app = Router::new()
+        .nest("/api", api)
+        .with_state(Arc::new(auth_service));
     let hostaddr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(hostaddr)
         .await
-        .expect(&format!("failed to bind to address '{}'", hostaddr));
+        .unwrap_or_else(|_| panic!("failed to bind to address '{}'", hostaddr));
     log::info!("Started listener at '{}'", hostaddr);
 
     axum::serve(listener, app).await.unwrap();

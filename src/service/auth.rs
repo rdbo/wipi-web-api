@@ -1,35 +1,10 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use argon2::{Argon2, PasswordVerifier, password_hash::PasswordHashString};
-use axum::{http::StatusCode, response::IntoResponse};
 use chrono::{DateTime, Duration, Utc};
 use uuid::Uuid;
 
-pub enum AuthError {
-    AcquireLockFailed,
-    SessionCooldown,
-    IncorrectPassword,
-}
-
-impl IntoResponse for AuthError {
-    fn into_response(self) -> axum::response::Response {
-        match self {
-            Self::AcquireLockFailed => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Unexpected error happened",
-            )
-                .into_response(),
-            Self::SessionCooldown => (
-                StatusCode::TOO_MANY_REQUESTS,
-                "Session creation is on cooldown",
-            )
-                .into_response(),
-            Self::IncorrectPassword => {
-                (StatusCode::UNAUTHORIZED, "User could not be authenticated").into_response()
-            }
-        }
-    }
-}
+use crate::error::Error;
 
 pub struct Session {
     pub id: Uuid,
@@ -63,24 +38,24 @@ impl AuthService {
         now < session.created_at + self.session_cooldown
     }
 
-    pub fn try_login(&self, password: String) -> Result<SessionId, AuthError> {
+    pub fn try_login(&self, password: String) -> Result<SessionId, Error> {
         let expected_hash = self.password_hash_str.password_hash();
         if Argon2::default()
             .verify_password(password.as_bytes(), &expected_hash)
             .is_err()
         {
-            return Err(AuthError::IncorrectPassword);
+            return Err(Error::IncorrectPassword);
         }
 
         let mut global_session = Self::global_session()
             .write()
-            .map_err(|_| AuthError::AcquireLockFailed)?;
+            .map_err(|_| Error::AcquireLockFailed)?;
 
         if global_session
             .as_ref()
             .is_some_and(|session| self.is_session_in_cooldown(session))
         {
-            return Err(AuthError::SessionCooldown);
+            return Err(Error::SessionCooldown);
         }
 
         let session_id = Uuid::new_v4();

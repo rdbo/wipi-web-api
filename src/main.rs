@@ -1,4 +1,5 @@
 mod api;
+mod error;
 mod service;
 
 use std::sync::Arc;
@@ -11,9 +12,8 @@ use crate::service::AuthService;
 
 #[tokio::main]
 async fn main() {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .parse_default_env()
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
         .init();
 
     let auth_service = AuthService::new(

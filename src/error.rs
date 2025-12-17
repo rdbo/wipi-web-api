@@ -4,6 +4,7 @@ use axum::{Json, http::StatusCode, response::IntoResponse};
 
 pub enum Error {
     AcquireLockFailed,
+    RouterClientIdentificationFailed,
     SessionCooldown,
     IncorrectPassword,
 }
@@ -11,7 +12,9 @@ pub enum Error {
 impl Error {
     pub fn status_code(&self) -> StatusCode {
         match self {
-            Self::AcquireLockFailed => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::AcquireLockFailed | Self::RouterClientIdentificationFailed => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             Self::SessionCooldown => StatusCode::TOO_MANY_REQUESTS,
             Self::IncorrectPassword => StatusCode::UNAUTHORIZED,
         }
@@ -20,6 +23,7 @@ impl Error {
     pub fn message(&self) -> &'static str {
         match self {
             Self::AcquireLockFailed => "Unexpected error happened",
+            Self::RouterClientIdentificationFailed => "Failed to identify the router client",
             Self::SessionCooldown => "Session creation is on cooldown",
             Self::IncorrectPassword => "Incorrect credentials",
         }

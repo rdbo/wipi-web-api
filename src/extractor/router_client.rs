@@ -25,7 +25,18 @@ where
             .get::<ConnectInfo<SocketAddr>>()
             .ok_or(Error::RouterClientIdentificationFailed)?;
 
-        let ip_address = socket_addr.ip();
+        let mut ip_address = socket_addr.ip();
+
+        // Resolve reverse proxy
+        if ip_address.is_loopback()
+            && let Some(real_ip) = parts.headers.get("X-Real-IP")
+        {
+            ip_address = real_ip
+                .to_str()
+                .ok()
+                .and_then(|s| s.parse::<IpAddr>().ok())
+                .ok_or(Error::RouterClientIdentificationFailed)?;
+        }
         // TODO: Actually get MAC address
         let mac_address = MacAddr::V6(MacAddr6::nil());
 

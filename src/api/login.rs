@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use axum::{
-    Json,
-    extract::State,
-    response::IntoResponse,
-};
+use axum::{Json, extract::State, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 
 use crate::{error::Error, extractor::RouterClient, service::AuthService};
@@ -24,7 +20,7 @@ pub async fn post(
     State(auth_service): State<Arc<AuthService>>,
     Json(PostRequestBody { password }): Json<PostRequestBody>,
 ) -> Result<impl IntoResponse, Error> {
-    log::trace!(
+    log::info!(
         "Router client '{}' (MAC: {}) attemping login...",
         router_client.ip_address,
         router_client.mac_address

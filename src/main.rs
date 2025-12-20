@@ -13,7 +13,7 @@ use argon2::password_hash::PasswordHashString;
 use axum::{Extension, Router, routing::post};
 use chrono::Duration;
 
-use crate::service::AuthService;
+use crate::service::{AuthService, NetlinkService};
 
 pub struct AppState {}
 
@@ -35,18 +35,16 @@ async fn main() {
     )
     .expect("failed to parse argon2id hash");
 
-    tracing::info!("Initializing nl80211 connection...");
-    let (connection, handle, _) =
-        rtnetlink::new_connection().expect("failed to start nl80211 connection");
-    tokio::spawn(connection);
-
+    tracing::info!("Initializing services...");
+    let netlink_service = NetlinkService::try_new().expect("failed to initialize netlink service");
     let auth_service = AuthService::new(admin_password_hash, Duration::seconds(15));
 
+    tracing::info!("Setting up routes...");
     let api = Router::new().route("/login", post(api::login::post));
     let app = Router::new()
         .nest("/api", api)
         .layer(Extension(Arc::new(auth_service)))
-        .layer(Extension(handle));
+        .layer(Extension(Arc::new(netlink_service)));
     let hostaddr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(hostaddr)
         .await

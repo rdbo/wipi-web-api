@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Extension, Json, extract::State, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 
 use crate::{error::Error, extractor::RouterClient, service::AuthService};
@@ -17,7 +17,7 @@ pub struct PostResponseBody {
 
 pub async fn post(
     router_client: RouterClient,
-    State(auth_service): State<Arc<AuthService>>,
+    Extension(auth_service): Extension<Arc<AuthService>>,
     Json(PostRequestBody { password }): Json<PostRequestBody>,
 ) -> Result<impl IntoResponse, Error> {
     log::info!(

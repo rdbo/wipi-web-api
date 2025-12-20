@@ -38,17 +38,30 @@ where
             .get::<Arc<NetlinkService>>()
             .ok_or(Error::RouterClientIdentificationFailed)?;
 
-        let ip_address = socket_addr.ip();
+        let mut ip_address = socket_addr.ip();
+
+        // Resolve reverse proxy
+        if ip_address.is_loopback()
+            && let Some(real_ip) = parts.headers.get("X-Real-IP")
+        {
+            ip_address = real_ip
+                .to_str()
+                .ok()
+                .and_then(|s| s.parse::<IpAddr>().ok())
+                .ok_or(Error::RouterClientIdentificationFailed)?;
+        }
 
         // Get MAC address
-        log::trace!(
-            "Searching for the MAC address of the IP '{}'...",
-            ip_address
-        );
+        log::trace!("Retrieving MAC address from rtnetlink...");
         let mut mac_table = netlink_service
             .get_neighbor_mac_addresses()
             .await
             .map_err(|_| Error::RouterClientIdentificationFailed)?;
+
+        log::trace!(
+            "Retrieved MAC addresses from rtnetlink, searching for '{}'...",
+            ip_address
+        );
 
         let mac_address = mac_table
             .remove(&ip_address) // Get owned value

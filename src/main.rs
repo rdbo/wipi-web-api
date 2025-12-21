@@ -46,7 +46,8 @@ async fn main() {
     tracing::info!("Setting up routes...");
     let api = Router::new()
         .route("/login", post(api::login::post))
-        .route("/logout", post(api::logout::post));
+        .route("/logout", post(api::logout::post))
+        .route("/auth_status", post(api::auth_status::post));
     let app = Router::new()
         .nest("/api", api)
         .layer(Extension(Arc::new(auth_service)))

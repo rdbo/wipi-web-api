@@ -1,5 +1,6 @@
 use crate::error::Error;
 
+pub mod auth_status;
 pub mod login;
 pub mod logout;
 

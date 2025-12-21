@@ -31,7 +31,7 @@ async fn main() {
 
     tracing::info!("Parsing configuration...");
     let admin_password_hash = PasswordHashString::new(
-        "$argon2id$v=19$m=16,t=2,p=1$VnExMnQ0VWowbG5jc1NIcQ$mgaySsRJLlCOMzQymUBRzQ",
+        "$argon2id$v=19$m=16,t=2,p=1$bmdTS2pGWGJVNmdORUo2ZQ$zA44lW9pmTUFzgRt1K8jPg",
     )
     .expect("failed to parse argon2id hash");
 

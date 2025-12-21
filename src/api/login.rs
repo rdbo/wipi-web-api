@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{Extension, Json, extract::State, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 
-use crate::{error::Error, extractor::RouterClient, service::AuthService};
+use crate::{api::Result, extractor::RouterClient, service::AuthService};
 
 #[derive(Deserialize)]
 pub struct PostRequestBody {
@@ -12,20 +12,23 @@ pub struct PostRequestBody {
 
 #[derive(Serialize)]
 pub struct PostResponseBody {
-    session_id: String,
+    auth_token: String,
 }
 
 pub async fn post(
     router_client: RouterClient,
     Extension(auth_service): Extension<Arc<AuthService>>,
     Json(PostRequestBody { password }): Json<PostRequestBody>,
-) -> Result<impl IntoResponse, Error> {
+) -> Result<impl IntoResponse> {
     log::info!(
-        "Router client '{}' (MAC: {}) attemping login...",
+        "Router client '{}' (MAC: {}) attemping sign in...",
         router_client.ip_address,
         router_client.mac_address
     );
-    let session_id = auth_service.try_login(password)?.to_string();
+    let session_id = auth_service.sign_in(password)?.to_string();
+    log::info!("New session created: {}", session_id);
 
-    Ok(Json(PostResponseBody { session_id }))
+    Ok(Json(PostResponseBody {
+        auth_token: session_id,
+    }))
 }

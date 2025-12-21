@@ -37,10 +37,16 @@ async fn main() {
 
     tracing::info!("Initializing services...");
     let netlink_service = NetlinkService::try_new().expect("failed to initialize netlink service");
-    let auth_service = AuthService::new(admin_password_hash, Duration::seconds(15));
+    let auth_service = AuthService::new(
+        admin_password_hash,
+        Duration::minutes(15),
+        Duration::seconds(15),
+    );
 
     tracing::info!("Setting up routes...");
-    let api = Router::new().route("/login", post(api::login::post));
+    let api = Router::new()
+        .route("/login", post(api::login::post))
+        .route("/logout", post(api::logout::post));
     let app = Router::new()
         .nest("/api", api)
         .layer(Extension(Arc::new(auth_service)))

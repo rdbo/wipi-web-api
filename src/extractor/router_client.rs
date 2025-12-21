@@ -51,6 +51,16 @@ where
                 .ok_or(Error::RouterClientIdentificationFailed)?;
         }
 
+        // NOTE: Cannot get MAC address of true localhost.
+        //       After all, loopback doesnt need a MAC address.
+        //       For that reason, I'll use a zeroed MAC for localhost.
+        if ip_address.is_loopback() {
+            return Ok(RouterClient {
+                ip_address,
+                mac_address: MacAddr::V6(MacAddr6::nil()),
+            });
+        }
+
         // Get MAC address
         log::trace!("Retrieving MAC address from rtnetlink...");
         let mut mac_table = netlink_service

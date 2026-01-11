@@ -3,12 +3,21 @@ use std::{collections::HashMap, net::IpAddr, str::FromStr};
 use anyhow::{Result, anyhow};
 use futures_util::TryStreamExt;
 use macaddr::MacAddr;
-use rtnetlink::packet_route::neighbour::{NeighbourAddress, NeighbourAttribute};
+use rtnetlink::packet_route::{
+    link::LinkAttribute,
+    neighbour::{NeighbourAddress, NeighbourAttribute},
+};
+use serde::Serialize;
 use tokio::task::JoinHandle;
 
 pub struct NetlinkService {
     rtnetlink_future: JoinHandle<()>,
     rtnetlink_handle: rtnetlink::Handle,
+}
+
+#[derive(Serialize)]
+pub struct NetlinkInterface {
+    name: String,
 }
 
 impl NetlinkService {
@@ -19,6 +28,30 @@ impl NetlinkService {
             rtnetlink_future,
             rtnetlink_handle,
         })
+    }
+
+    pub async fn get_interfaces(&self) -> Result<Vec<NetlinkInterface>> {
+        let mut links = self.rtnetlink_handle.link().get().execute();
+        let mut interfaces = Vec::new();
+        while let Some(link) = links.try_next().await? {
+            let Some(ifname) = link.attributes.into_iter().find_map(|x| {
+                if let LinkAttribute::IfName(name) = x {
+                    Some(name)
+                } else {
+                    None
+                }
+            }) else {
+                // TODO: Assure that skipping unnamed interfaces is a good idea
+                log::trace!("Unnamed interface found! Index: {}", link.header.index);
+                continue;
+            };
+
+            log::trace!("Found interface: {}", ifname);
+
+            interfaces.push(NetlinkInterface { name: ifname });
+        }
+
+        Ok(interfaces)
     }
 
     pub async fn get_neighbor_mac_addresses(&self) -> Result<HashMap<IpAddr, MacAddr>> {

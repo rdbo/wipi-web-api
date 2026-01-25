@@ -9,29 +9,106 @@ use rtnetlink::packet_route::{
 };
 use serde::Serialize;
 use tokio::task::JoinHandle;
+use wl_nl80211::Nl80211IfMode;
 
 pub struct NetlinkService {
     rtnetlink_future: JoinHandle<()>,
-    rtnetlink_handle: rtnetlink::Handle,
+    rtnetlink: rtnetlink::Handle,
+    nl80211_future: JoinHandle<()>,
+    nl80211: wl_nl80211::Nl80211Handle,
 }
 
-#[derive(Serialize)]
+#[derive(Debug)]
+pub struct WiphyDevice {
+    phy_index: u32,
+    phy_name: String,
+    supported_iftypes: Vec<Nl80211IfMode>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct NetlinkInterface {
+    index: u32,
     name: String,
 }
 
 impl NetlinkService {
     pub fn try_new() -> std::io::Result<Self> {
-        let (connection, rtnetlink_handle, _) = rtnetlink::new_connection()?;
+        let (connection, rtnetlink, _) = rtnetlink::new_connection()?;
         let rtnetlink_future = tokio::spawn(connection);
+        let (connection, nl80211, _) = wl_nl80211::new_connection().unwrap();
+        let nl80211_future = tokio::spawn(connection);
+
         Ok(Self {
             rtnetlink_future,
-            rtnetlink_handle,
+            rtnetlink,
+            nl80211_future,
+            nl80211,
         })
     }
 
+    async fn get_wiphy_interfaces(&self) -> Result<()> {
+        let mut interface = self.nl80211.interface().get(Vec::new()).execute().await;
+        while let Some(msg) = interface.try_next().await? {
+            log::info!("{:?}", msg);
+        }
+
+        Ok(())
+    }
+
+    async fn get_wiphy_devices(&self) -> Result<Vec<WiphyDevice>> {
+        let mut wiphy = self.nl80211.wireless_physic().get().execute().await;
+        let mut interfaces = HashMap::new();
+        while let Some(msg) = wiphy.try_next().await? {
+            let mut phy_index = None;
+            let mut phy_name = None;
+            let mut supported_iftypes = None;
+            for attr in msg.payload.attributes.into_iter() {
+                match attr {
+                    wl_nl80211::Nl80211Attr::Wiphy(index) => {
+                        phy_index = Some(index);
+                    }
+                    wl_nl80211::Nl80211Attr::WiphyName(name) => {
+                        phy_name = Some(name);
+                    }
+                    wl_nl80211::Nl80211Attr::SupportedIftypes(iftypes) => {
+                        supported_iftypes = Some(iftypes);
+                    }
+
+                    _ => {}
+                }
+            }
+
+            let Some(phy_index) = phy_index else {
+                log::error!("Missing wireless physical device index");
+                continue;
+            };
+
+            let mut wiphy_dev = interfaces
+                .remove(&phy_index)
+                .unwrap_or_else(|| WiphyDevice {
+                    phy_index,
+                    phy_name: "".to_string(),
+                    supported_iftypes: vec![],
+                });
+
+            if let Some(phy_name) = phy_name {
+                wiphy_dev.phy_name = phy_name;
+            };
+
+            if let Some(supported_iftypes) = supported_iftypes {
+                wiphy_dev.supported_iftypes = supported_iftypes;
+            }
+
+            interfaces.insert(phy_index, wiphy_dev);
+        }
+
+        self.get_wiphy_interfaces().await?;
+
+        Ok(interfaces.into_values().collect())
+    }
+
     pub async fn get_interfaces(&self) -> Result<Vec<NetlinkInterface>> {
-        let mut links = self.rtnetlink_handle.link().get().execute();
+        let mut links = self.rtnetlink.link().get().execute();
         let mut interfaces = Vec::new();
         while let Some(link) = links.try_next().await? {
             let Some(ifname) = link.attributes.into_iter().find_map(|x| {
@@ -42,13 +119,16 @@ impl NetlinkService {
                 }
             }) else {
                 // TODO: Assure that skipping unnamed interfaces is a good idea
-                log::trace!("Unnamed interface found! Index: {}", link.header.index);
+                log::warn!("Unnamed interface found! Index: {}", link.header.index);
                 continue;
             };
 
             log::trace!("Found interface: {}", ifname);
 
-            interfaces.push(NetlinkInterface { name: ifname });
+            interfaces.push(NetlinkInterface {
+                index: link.header.index,
+                name: ifname,
+            });
         }
 
         Ok(interfaces)
@@ -57,7 +137,7 @@ impl NetlinkService {
     pub async fn get_neighbor_mac_addresses(&self) -> Result<HashMap<IpAddr, MacAddr>> {
         let mut address_map = HashMap::new();
 
-        let mut neighbours = self.rtnetlink_handle.neighbours().get().execute();
+        let mut neighbours = self.rtnetlink.neighbours().get().execute();
         while let Some(route) = neighbours.try_next().await? {
             log::trace!("Current route: {:?}", route);
 
@@ -92,6 +172,7 @@ impl NetlinkService {
                 log::trace!("No IP address in route, skipping...");
                 continue;
             };
+
             let Some(mac_address) = mac_address else {
                 log::trace!("No MAC address in route, skipping...");
                 continue;
@@ -107,5 +188,6 @@ impl NetlinkService {
 impl Drop for NetlinkService {
     fn drop(&mut self) {
         self.rtnetlink_future.abort();
+        self.nl80211_future.abort();
     }
 }

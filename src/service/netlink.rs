@@ -9,13 +9,21 @@ use rtnetlink::packet_route::{
 };
 use serde::Serialize;
 use tokio::task::JoinHandle;
-use wl_nl80211::Nl80211IfMode;
+use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
 
 pub struct NetlinkService {
     rtnetlink_future: JoinHandle<()>,
     rtnetlink: rtnetlink::Handle,
     nl80211_future: JoinHandle<()>,
     nl80211: wl_nl80211::Nl80211Handle,
+}
+
+#[derive(Debug)]
+pub struct WiphyInterface {
+    index: u32,
+    phy_index: u32,
+    name: String,
+    iftype: Nl80211InterfaceType,
 }
 
 #[derive(Debug)]
@@ -46,18 +54,50 @@ impl NetlinkService {
         })
     }
 
-    async fn get_wiphy_interfaces(&self) -> Result<()> {
+    async fn get_wiphy_interfaces(&self) -> Result<Vec<WiphyInterface>> {
+        let mut interfaces = vec![];
         let mut interface = self.nl80211.interface().get(Vec::new()).execute().await;
         while let Some(msg) = interface.try_next().await? {
-            log::info!("{:?}", msg);
+            let mut index = None;
+            let mut phy_index = None;
+            let mut name = None;
+            let mut iftype = None;
+            for attr in msg.payload.attributes.into_iter() {
+                match attr {
+                    Nl80211Attr::IfIndex(i) => {
+                        index = Some(i);
+                    }
+                    Nl80211Attr::Wiphy(i) => {
+                        phy_index = Some(i);
+                    }
+                    Nl80211Attr::IfName(s) => {
+                        name = Some(s);
+                    }
+                    Nl80211Attr::IfType(t) => {
+                        iftype = Some(t);
+                    }
+                    _ => {}
+                }
+            }
+            let (Some(index), Some(phy_index), Some(name), Some(iftype)) =
+                (index, phy_index, name, iftype)
+            else {
+                continue;
+            };
+            interfaces.push(WiphyInterface {
+                index,
+                phy_index,
+                name,
+                iftype,
+            })
         }
 
-        Ok(())
+        Ok(interfaces)
     }
 
     async fn get_wiphy_devices(&self) -> Result<Vec<WiphyDevice>> {
         let mut wiphy = self.nl80211.wireless_physic().get().execute().await;
-        let mut interfaces = HashMap::new();
+        let mut devices = HashMap::new();
         while let Some(msg) = wiphy.try_next().await? {
             let mut phy_index = None;
             let mut phy_name = None;
@@ -83,13 +123,11 @@ impl NetlinkService {
                 continue;
             };
 
-            let mut wiphy_dev = interfaces
-                .remove(&phy_index)
-                .unwrap_or_else(|| WiphyDevice {
-                    phy_index,
-                    phy_name: "".to_string(),
-                    supported_iftypes: vec![],
-                });
+            let mut wiphy_dev = devices.remove(&phy_index).unwrap_or_else(|| WiphyDevice {
+                phy_index,
+                phy_name: "".to_string(),
+                supported_iftypes: vec![],
+            });
 
             if let Some(phy_name) = phy_name {
                 wiphy_dev.phy_name = phy_name;
@@ -99,12 +137,10 @@ impl NetlinkService {
                 wiphy_dev.supported_iftypes = supported_iftypes;
             }
 
-            interfaces.insert(phy_index, wiphy_dev);
+            devices.insert(phy_index, wiphy_dev);
         }
 
-        self.get_wiphy_interfaces().await?;
-
-        Ok(interfaces.into_values().collect())
+        Ok(devices.into_values().collect())
     }
 
     pub async fn get_interfaces(&self) -> Result<Vec<NetlinkInterface>> {

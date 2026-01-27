@@ -82,6 +82,7 @@ impl NetlinkService {
             let (Some(index), Some(phy_index), Some(name), Some(iftype)) =
                 (index, phy_index, name, iftype)
             else {
+                log::warn!("Missing required field in wiphy interface.");
                 continue;
             };
             interfaces.push(WiphyInterface {
@@ -119,7 +120,7 @@ impl NetlinkService {
             }
 
             let Some(phy_index) = phy_index else {
-                log::error!("Missing wireless physical device index");
+                log::warn!("Missing wireless physical device index");
                 continue;
             };
 

@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use futures_util::TryStreamExt;
 use macaddr::MacAddr;
 use rtnetlink::packet_route::{
-    link::LinkAttribute,
+    link::{LinkAttribute, LinkLayerType},
     neighbour::{NeighbourAddress, NeighbourAttribute},
 };
 use serde::Serialize;
@@ -20,23 +20,40 @@ pub struct NetlinkService {
 
 #[derive(Debug)]
 pub struct WiphyInterface {
-    index: u32,
-    phy_index: u32,
-    name: String,
-    iftype: Nl80211InterfaceType,
+    pub index: u32,
+    pub phy_index: u32,
+    pub name: String,
+    pub iftype: Nl80211InterfaceType,
 }
 
 #[derive(Debug)]
 pub struct WiphyDevice {
-    phy_index: u32,
-    phy_name: String,
-    supported_iftypes: Vec<Nl80211IfMode>,
+    pub phy_index: u32,
+    pub phy_name: String,
+    pub supported_iftypes: Vec<Nl80211IfMode>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
+pub enum NetlinkInterfaceDetail {
+    Unknown,
+    Ethernet {},
+    Wireless {
+        phy_index: u32,
+        // NOTE: Some wireless physical devices can
+        //       advertise more than one interface.
+        //       Those cases are not directly supported, mainly
+        //       because it would be annoying to manage
+        //       the possible interface mode combinations.
+        supported_modes: Vec<Nl80211IfMode>,
+    },
+    Loopback,
+}
+
+#[derive(Debug)]
 pub struct NetlinkInterface {
-    index: u32,
-    name: String,
+    pub index: u32,
+    pub name: String,
+    pub detail: NetlinkInterfaceDetail,
 }
 
 impl NetlinkService {
@@ -54,7 +71,7 @@ impl NetlinkService {
         })
     }
 
-    async fn get_wiphy_interfaces(&self) -> Result<Vec<WiphyInterface>> {
+    pub async fn get_wiphy_interfaces(&self) -> Result<Vec<WiphyInterface>> {
         let mut interfaces = vec![];
         let mut interface = self.nl80211.interface().get(Vec::new()).execute().await;
         while let Some(msg) = interface.try_next().await? {
@@ -96,7 +113,7 @@ impl NetlinkService {
         Ok(interfaces)
     }
 
-    async fn get_wiphy_devices(&self) -> Result<Vec<WiphyDevice>> {
+    pub async fn get_wiphy_devices(&self) -> Result<Vec<WiphyDevice>> {
         let mut wiphy = self.nl80211.wireless_physic().get().execute().await;
         let mut devices = HashMap::new();
         while let Some(msg) = wiphy.try_next().await? {
@@ -146,8 +163,41 @@ impl NetlinkService {
 
     pub async fn get_interfaces(&self) -> Result<Vec<NetlinkInterface>> {
         let mut links = self.rtnetlink.link().get().execute();
-        let mut interfaces = Vec::new();
+        let mut interfaces = HashMap::new();
+
+        // Handle wireless interfaces
+        let wiphy_devices = self
+            .get_wiphy_devices()
+            .await?
+            .into_iter()
+            .map(|x| (x.phy_index, x))
+            .collect::<HashMap<_, _>>();
+        let wiphy_interfaces = self.get_wiphy_interfaces().await?;
+
+        for interface in wiphy_interfaces {
+            interfaces.insert(
+                interface.name.clone(),
+                NetlinkInterface {
+                    index: interface.index,
+                    name: interface.name,
+                    detail: NetlinkInterfaceDetail::Wireless {
+                        phy_index: interface.phy_index,
+                        supported_modes: wiphy_devices
+                            .get(&interface.phy_index)
+                            .ok_or(anyhow!(
+                                "Missing wiphy device for index: {}",
+                                interface.phy_index
+                            ))?
+                            .supported_iftypes
+                            .clone(),
+                    },
+                },
+            );
+        }
+
+        // Handle other interfaces
         while let Some(link) = links.try_next().await? {
+            log::debug!("LINK: {link:?}");
             let Some(ifname) = link.attributes.into_iter().find_map(|x| {
                 if let LinkAttribute::IfName(name) = x {
                     Some(name)
@@ -161,14 +211,28 @@ impl NetlinkService {
             };
 
             log::trace!("Found interface: {}", ifname);
+            if interfaces.contains_key(&ifname) {
+                log::trace!("Interface '{ifname}' already inserted, skipped");
+                continue;
+            }
 
-            interfaces.push(NetlinkInterface {
-                index: link.header.index,
-                name: ifname,
-            });
+            let detail = match link.header.link_layer_type {
+                LinkLayerType::Ether => NetlinkInterfaceDetail::Ethernet {},
+                LinkLayerType::Loopback => NetlinkInterfaceDetail::Loopback,
+                _ => NetlinkInterfaceDetail::Unknown,
+            };
+
+            interfaces.insert(
+                ifname.clone(),
+                NetlinkInterface {
+                    index: link.header.index,
+                    name: ifname,
+                    detail,
+                },
+            );
         }
 
-        Ok(interfaces)
+        Ok(interfaces.into_values().collect())
     }
 
     pub async fn get_neighbor_mac_addresses(&self) -> Result<HashMap<IpAddr, MacAddr>> {

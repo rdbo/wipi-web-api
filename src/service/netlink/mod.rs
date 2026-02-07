@@ -24,10 +24,10 @@ pub struct NetlinkService {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "value")]
 pub enum NetlinkInterfaceMode {
-    UnknownWireless(u32),
     Station,
     Monitor,
     AccessPoint,
+    OtherWireless(u32),
 }
 
 impl From<Nl80211IfMode> for NetlinkInterfaceMode {
@@ -36,7 +36,7 @@ impl From<Nl80211IfMode> for NetlinkInterfaceMode {
             Nl80211IfMode::Station => Self::Station,
             Nl80211IfMode::Monitor => Self::Monitor,
             Nl80211IfMode::Ap => Self::AccessPoint,
-            other => Self::UnknownWireless(u16::from(other).into()),
+            other => Self::OtherWireless(u16::from(other).into()),
         }
     }
 }
@@ -47,7 +47,7 @@ impl From<Nl80211InterfaceType> for NetlinkInterfaceMode {
             Nl80211InterfaceType::Station => Self::Station,
             Nl80211InterfaceType::Monitor => Self::Monitor,
             Nl80211InterfaceType::Ap => Self::AccessPoint,
-            other => Self::UnknownWireless(other.into()),
+            other => Self::OtherWireless(other.into()),
         }
     }
 }

@@ -11,23 +11,8 @@ use crate::{
 };
 
 #[derive(Serialize)]
-struct Interface {
-    index: u32,
-    name: String,
-}
-
-impl From<NetlinkInterface> for Interface {
-    fn from(value: NetlinkInterface) -> Self {
-        Self {
-            index: value.index,
-            name: value.name,
-        }
-    }
-}
-
-#[derive(Serialize)]
 pub struct PostResponseBody {
-    interfaces: Vec<Interface>,
+    interfaces: Vec<NetlinkInterface>,
 }
 
 pub async fn post(
@@ -37,10 +22,6 @@ pub async fn post(
     let interfaces = netlink_service
         .get_interfaces()
         .await
-        .map(|x| {
-            log::debug!("Interfaces: {:?}", x);
-            x.into_iter().map(Interface::from).collect()
-        })
         .map_err(|_| Error::UnexpectedError)?;
 
     Ok(Json(PostResponseBody { interfaces }))

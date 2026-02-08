@@ -44,7 +44,9 @@ async fn main() {
     );
 
     tracing::info!("Setting up routes...");
-    let net = Router::new().route("/interfaces", post(api::net::interfaces::post));
+    let net = Router::new()
+        .route("/interfaces", post(api::net::interfaces::post))
+        .route("/ifstate", post(api::net::ifstate::post));
     let api = Router::new()
         .route("/login", post(api::login::post))
         .route("/logout", post(api::logout::post))

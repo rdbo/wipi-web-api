@@ -14,7 +14,11 @@ use serde::Serialize;
 use tokio::task::JoinHandle;
 use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
 
-use crate::service::netlink::{route::RouteManager, wiphy::WiphyManager};
+pub use crate::service::netlink::route::OperState;
+use crate::service::netlink::{
+    route::{RouteInterface, RouteInterfaceKind, RouteManager},
+    wiphy::WiphyManager,
+};
 
 pub struct NetlinkService {
     wiphy_mgr: WiphyManager,
@@ -54,15 +58,28 @@ impl From<Nl80211InterfaceType> for NetlinkInterfaceMode {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NetlinkInterfaceModeStatus {
-    active: NetlinkInterfaceMode,
-    supported: Vec<NetlinkInterfaceMode>,
+    pub active: NetlinkInterfaceMode,
+    pub supported: Vec<NetlinkInterfaceMode>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NetlinkInterface {
-    index: u32,
-    name: String,
-    mode_status: Option<NetlinkInterfaceModeStatus>,
+    pub index: u32,
+    pub name: String,
+    pub kind: RouteInterfaceKind,
+    pub oper_state: OperState,
+    pub mode_status: Option<NetlinkInterfaceModeStatus>,
+}
+
+impl Into<RouteInterface> for NetlinkInterface {
+    fn into(self) -> RouteInterface {
+        RouteInterface {
+            index: self.index,
+            name: self.name,
+            kind: self.kind,
+            oper_state: self.oper_state,
+        }
+    }
 }
 
 impl NetlinkService {
@@ -115,6 +132,8 @@ impl NetlinkService {
                 NetlinkInterface {
                     index: iface.index,
                     name: iface.name,
+                    kind: RouteInterfaceKind::Wireless,
+                    oper_state: OperState::Unknown,
                     mode_status: Some(NetlinkInterfaceModeStatus {
                         active: active_mode,
                         supported: supported_modes,
@@ -126,9 +145,10 @@ impl NetlinkService {
         // Handle other interfaces
         let route_interfaces = self.route_mgr.get_interfaces().await?;
         for iface in route_interfaces {
-            if interfaces.contains_key(&iface.name) {
+            if let Some(inserted_iface) = interfaces.get_mut(&iface.name) {
+                inserted_iface.oper_state = iface.oper_state;
                 log::debug!(
-                    "Interface '{}' already inserted in the interface map",
+                    "Interface '{}' already inserted in the interface map. Its data has been complemented with route information.",
                     iface.name
                 );
                 continue;
@@ -139,6 +159,8 @@ impl NetlinkService {
                 NetlinkInterface {
                     index: iface.index,
                     name: iface.name,
+                    kind: iface.kind,
+                    oper_state: iface.oper_state,
                     mode_status: None,
                 },
             );
@@ -149,5 +171,25 @@ impl NetlinkService {
 
     pub async fn get_neighbor_mac_addresses(&self) -> Result<HashMap<IpAddr, MacAddr>> {
         self.route_mgr.get_neighbor_mac_addresses().await
+    }
+
+    pub async fn find_interface_by_name(&self, name: &str) -> Result<NetlinkInterface> {
+        // TODO: Avoid querying all interfaces - can be optimized with filters
+        self.get_interfaces()
+            .await?
+            .into_iter()
+            .find(|x| x.name == name)
+            .ok_or(anyhow!("Could not find interface with name: {}", name))
+    }
+
+    pub async fn set_interface_oper_state(
+        &self,
+        interface: &NetlinkInterface,
+        state: OperState,
+    ) -> Result<()> {
+        let route_interface = interface.to_owned().into();
+        self.route_mgr
+            .set_link_oper_state(&route_interface, state)
+            .await
     }
 }

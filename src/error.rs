@@ -9,6 +9,7 @@ pub enum Error {
     IncorrectPassword,
     Unauthenticated,
     SessionExpired,
+    InterfaceNotFound,
 }
 
 impl Error {
@@ -21,6 +22,7 @@ impl Error {
             Self::IncorrectPassword => StatusCode::UNAUTHORIZED,
             Self::Unauthenticated => StatusCode::UNAUTHORIZED,
             Self::SessionExpired => StatusCode::UNAUTHORIZED,
+            Self::InterfaceNotFound => StatusCode::BAD_REQUEST,
         }
     }
 
@@ -32,6 +34,7 @@ impl Error {
             Self::IncorrectPassword => "Incorrect credentials",
             Self::Unauthenticated => "User is not authenticated",
             Self::SessionExpired => "Session has expired",
+            Self::InterfaceNotFound => "The specified interface was not found",
         }
     }
 }

@@ -1,24 +1,23 @@
 mod route;
 mod wiphy;
 
-use std::{collections::HashMap, net::IpAddr, str::FromStr};
+pub use route::LinkState;
 
-use anyhow::{Result, anyhow};
-use futures_util::TryStreamExt;
-use macaddr::MacAddr;
-use rtnetlink::packet_route::{
-    link::{LinkAttribute, LinkLayerType},
-    neighbour::{NeighbourAddress, NeighbourAttribute},
-};
-use serde::Serialize;
-use tokio::task::JoinHandle;
-use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
-
-pub use crate::service::netlink::route::OperState;
 use crate::service::netlink::{
     route::{RouteInterface, RouteInterfaceKind, RouteManager},
     wiphy::WiphyManager,
 };
+use anyhow::{Result, anyhow};
+use futures_util::TryStreamExt;
+use macaddr::MacAddr;
+use rtnetlink::packet_route::{
+    link::{LinkAttribute, LinkFlags, LinkLayerType},
+    neighbour::{NeighbourAddress, NeighbourAttribute},
+};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, net::IpAddr, str::FromStr};
+use tokio::task::JoinHandle;
+use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
 
 pub struct NetlinkService {
     wiphy_mgr: WiphyManager,
@@ -67,8 +66,18 @@ pub struct NetlinkInterface {
     pub index: u32,
     pub name: String,
     pub kind: RouteInterfaceKind,
-    pub oper_state: OperState,
+    pub link_flags: u32,
     pub mode_status: Option<NetlinkInterfaceModeStatus>,
+}
+
+impl NetlinkInterface {
+    pub fn state(&self) -> LinkState {
+        if self.link_flags & LinkFlags::Up.bits() == LinkFlags::Up.bits() {
+            LinkState::Up
+        } else {
+            LinkState::Down
+        }
+    }
 }
 
 impl Into<RouteInterface> for NetlinkInterface {
@@ -77,7 +86,7 @@ impl Into<RouteInterface> for NetlinkInterface {
             index: self.index,
             name: self.name,
             kind: self.kind,
-            oper_state: self.oper_state,
+            link_flags: LinkFlags::from_bits_truncate(self.link_flags),
         }
     }
 }
@@ -133,7 +142,7 @@ impl NetlinkService {
                     index: iface.index,
                     name: iface.name,
                     kind: RouteInterfaceKind::Wireless,
-                    oper_state: OperState::Unknown,
+                    link_flags: 0,
                     mode_status: Some(NetlinkInterfaceModeStatus {
                         active: active_mode,
                         supported: supported_modes,
@@ -146,7 +155,7 @@ impl NetlinkService {
         let route_interfaces = self.route_mgr.get_interfaces().await?;
         for iface in route_interfaces {
             if let Some(inserted_iface) = interfaces.get_mut(&iface.name) {
-                inserted_iface.oper_state = iface.oper_state;
+                inserted_iface.link_flags = iface.link_flags.bits();
                 log::debug!(
                     "Interface '{}' already inserted in the interface map. Its data has been complemented with route information.",
                     iface.name
@@ -160,7 +169,7 @@ impl NetlinkService {
                     index: iface.index,
                     name: iface.name,
                     kind: iface.kind,
-                    oper_state: iface.oper_state,
+                    link_flags: iface.link_flags.bits(),
                     mode_status: None,
                 },
             );
@@ -182,14 +191,12 @@ impl NetlinkService {
             .ok_or(anyhow!("Could not find interface with name: {}", name))
     }
 
-    pub async fn set_interface_oper_state(
+    pub async fn set_interface_state(
         &self,
         interface: &NetlinkInterface,
-        state: OperState,
+        state: LinkState,
     ) -> Result<()> {
         let route_interface = interface.to_owned().into();
-        self.route_mgr
-            .set_link_oper_state(&route_interface, state)
-            .await
+        self.route_mgr.set_link_state(&route_interface, state).await
     }
 }

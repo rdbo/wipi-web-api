@@ -7,12 +7,18 @@ use macaddr::MacAddr;
 use rtnetlink::{
     LinkUnspec,
     packet_route::{
-        link::{LinkAttribute, LinkHeader, LinkLayerType, LinkMessage, State},
+        link::{LinkAttribute, LinkFlags, LinkHeader, LinkLayerType, LinkMessage, State},
         neighbour::{NeighbourAddress, NeighbourAttribute},
     },
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
+
+#[derive(Serialize, Deserialize)]
+pub enum LinkState {
+    Down,
+    Up,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub enum RouteInterfaceKind {
@@ -27,25 +33,7 @@ pub struct RouteInterface {
     pub index: u32,
     pub name: String,
     pub kind: RouteInterfaceKind,
-    pub oper_state: OperState,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub enum OperState {
-    Unknown,
-    Down,
-    Up,
-    Other(u8),
-}
-
-impl From<State> for OperState {
-    fn from(value: State) -> Self {
-        match value {
-            State::Down => Self::Down,
-            State::Up => Self::Up,
-            x => Self::Other(x.into()),
-        }
-    }
+    pub link_flags: LinkFlags,
 }
 
 pub struct RouteManager {
@@ -70,23 +58,17 @@ impl RouteManager {
         while let Some(link) = links.try_next().await? {
             let index = link.header.index;
             let mut ifname = None;
-            let mut oper_state = None;
+            let mut link_flags = link.header.flags;
 
             for attr in link.attributes {
                 match attr {
                     LinkAttribute::IfName(name) => ifname = Some(name),
-                    LinkAttribute::OperState(state) => oper_state = Some(state.into()),
                     _ => {}
                 }
             }
 
             let Some(ifname) = ifname else {
                 log::warn!("Unnamed interface found! Index: {}", index);
-                continue;
-            };
-
-            let Some(oper_state) = oper_state else {
-                log::warn!("Missing oper state for interface '{}'", ifname);
                 continue;
             };
 
@@ -108,7 +90,7 @@ impl RouteManager {
                 index,
                 name: ifname,
                 kind,
-                oper_state,
+                link_flags,
             });
         }
 
@@ -165,26 +147,20 @@ impl RouteManager {
         Ok(address_map)
     }
 
-    pub async fn set_link_oper_state(
+    pub async fn set_link_state(
         &self,
         route_interface: &RouteInterface,
-        state: OperState,
+        state: LinkState,
     ) -> Result<()> {
         self.rtnetlink
             .link()
             .set(match state {
-                OperState::Down => LinkUnspec::new_with_index(route_interface.index)
+                LinkState::Down => LinkUnspec::new_with_index(route_interface.index)
                     .down()
                     .build(),
-                OperState::Up => LinkUnspec::new_with_index(route_interface.index)
+                LinkState::Up => LinkUnspec::new_with_index(route_interface.index)
                     .up()
                     .build(),
-                _ => {
-                    return Err(anyhow!(
-                        "Invalid interface operational state specified: {:?}",
-                        state
-                    ));
-                }
             })
             .execute()
             .await?;

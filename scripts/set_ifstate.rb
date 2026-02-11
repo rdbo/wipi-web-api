@@ -19,7 +19,7 @@ puts "Token: #{token}"
 
 resp = Net::HTTP.post(
   URI('http://localhost:8080/api/net/ifstate'),
-  { interface_name: 'wlan0', oper_state: 'Up' }.to_json,
+  { interface_name: 'wlan0', link_state: 'Up' }.to_json,
   { "Authorization" => "Bearer #{token}",
     "Content-Type" => "application/json" }
 )

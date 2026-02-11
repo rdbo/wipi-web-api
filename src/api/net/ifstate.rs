@@ -7,33 +7,18 @@ use crate::{
     api::Result,
     error::Error,
     extractor::{RouterClient, UserSession},
-    service::{AuthService, NetlinkInterface, NetlinkService, OperState},
+    service::{AuthService, LinkState, NetlinkInterface, NetlinkService},
 };
-
-#[derive(Deserialize)]
-pub enum IfState {
-    Down,
-    Up,
-}
-
-impl Into<OperState> for IfState {
-    fn into(self) -> OperState {
-        match self {
-            IfState::Down => OperState::Down,
-            IfState::Up => OperState::Up,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 pub struct PostRequestBody {
     interface_name: String,
-    oper_state: IfState,
+    link_state: LinkState,
 }
 
 #[derive(Serialize)]
 pub struct PostResponseBody {
-    oper_state: OperState,
+    link_state: LinkState,
 }
 
 pub async fn post(
@@ -47,7 +32,7 @@ pub async fn post(
         .map_err(|_| Error::InterfaceNotFound)?;
 
     netlink_service
-        .set_interface_oper_state(&interface, payload.oper_state.into())
+        .set_interface_state(&interface, payload.link_state)
         .await
         .map_err(|_| Error::UnexpectedError)?;
 
@@ -57,6 +42,6 @@ pub async fn post(
         .map_err(|_| Error::UnexpectedError)?;
 
     Ok(Json(PostResponseBody {
-        oper_state: interface.oper_state,
+        link_state: interface.state(),
     }))
 }

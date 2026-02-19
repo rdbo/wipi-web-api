@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use anyhow::Result;
 use futures_util::TryStreamExt;
 use tokio::task::JoinHandle;
-use wl_nl80211::Nl80211Handle;
 use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
+use wl_nl80211::{Nl80211Handle, Nl80211Message};
 
 #[derive(Debug, Clone)]
 pub struct WiphyInterface {
@@ -123,6 +123,20 @@ impl WiphyManager {
         }
 
         Ok(devices.into_values().collect())
+    }
+
+    pub async fn set_wiphy_interface_mode(
+        &self,
+        wiphy_interface: &WiphyInterface,
+        iftype: Nl80211InterfaceType,
+    ) -> Result<()> {
+        let attrs = wl_nl80211::Nl80211AttrsBuilder::new()
+            .if_index(wiphy_interface.index)
+            .interface_type(iftype)
+            .build();
+        let mut result = self.nl80211.interface().set(attrs).execute().await;
+        result.try_next().await?;
+        Ok(())
     }
 }
 

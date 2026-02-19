@@ -1,11 +1,13 @@
+mod interface;
 mod route;
 mod wiphy;
 
+pub use interface::*;
 pub use route::LinkState;
 
 use crate::service::netlink::{
     route::{RouteInterface, RouteInterfaceKind, RouteManager},
-    wiphy::WiphyManager,
+    wiphy::{WiphyInterface, WiphyManager},
 };
 use anyhow::{Result, anyhow};
 use futures_util::TryStreamExt;
@@ -15,80 +17,13 @@ use rtnetlink::packet_route::{
     neighbour::{NeighbourAddress, NeighbourAttribute},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::IpAddr, str::FromStr};
+use std::{collections::HashMap, net::IpAddr, ops::Index, str::FromStr};
 use tokio::task::JoinHandle;
 use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
 
 pub struct NetlinkService {
     wiphy_mgr: WiphyManager,
     route_mgr: RouteManager,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", content = "value")]
-pub enum NetlinkInterfaceMode {
-    Station,
-    Monitor,
-    AccessPoint,
-    OtherWireless(u32),
-}
-
-impl From<Nl80211IfMode> for NetlinkInterfaceMode {
-    fn from(value: Nl80211IfMode) -> Self {
-        match value {
-            Nl80211IfMode::Station => Self::Station,
-            Nl80211IfMode::Monitor => Self::Monitor,
-            Nl80211IfMode::Ap => Self::AccessPoint,
-            other => Self::OtherWireless(u16::from(other).into()),
-        }
-    }
-}
-
-impl From<Nl80211InterfaceType> for NetlinkInterfaceMode {
-    fn from(value: Nl80211InterfaceType) -> Self {
-        match value {
-            Nl80211InterfaceType::Station => Self::Station,
-            Nl80211InterfaceType::Monitor => Self::Monitor,
-            Nl80211InterfaceType::Ap => Self::AccessPoint,
-            other => Self::OtherWireless(other.into()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct NetlinkInterfaceModeStatus {
-    pub active: NetlinkInterfaceMode,
-    pub supported: Vec<NetlinkInterfaceMode>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct NetlinkInterface {
-    pub index: u32,
-    pub name: String,
-    pub kind: RouteInterfaceKind,
-    pub link_flags: u32,
-    pub mode_status: Option<NetlinkInterfaceModeStatus>,
-}
-
-impl NetlinkInterface {
-    pub fn state(&self) -> LinkState {
-        if self.link_flags & LinkFlags::Up.bits() == LinkFlags::Up.bits() {
-            LinkState::Up
-        } else {
-            LinkState::Down
-        }
-    }
-}
-
-impl Into<RouteInterface> for NetlinkInterface {
-    fn into(self) -> RouteInterface {
-        RouteInterface {
-            index: self.index,
-            name: self.name,
-            kind: self.kind,
-            link_flags: LinkFlags::from_bits_truncate(self.link_flags),
-        }
-    }
 }
 
 impl NetlinkService {
@@ -142,7 +77,7 @@ impl NetlinkService {
                     index: iface.index,
                     name: iface.name,
                     kind: RouteInterfaceKind::Wireless,
-                    link_flags: 0,
+                    link_flags: LinkFlags::empty(),
                     mode_status: Some(NetlinkInterfaceModeStatus {
                         active: active_mode,
                         supported: supported_modes,
@@ -155,7 +90,7 @@ impl NetlinkService {
         let route_interfaces = self.route_mgr.get_interfaces().await?;
         for iface in route_interfaces {
             if let Some(inserted_iface) = interfaces.get_mut(&iface.name) {
-                inserted_iface.link_flags = iface.link_flags.bits();
+                inserted_iface.link_flags = iface.link_flags;
                 log::debug!(
                     "Interface '{}' already inserted in the interface map. Its data has been complemented with route information.",
                     iface.name
@@ -169,7 +104,7 @@ impl NetlinkService {
                     index: iface.index,
                     name: iface.name,
                     kind: iface.kind,
-                    link_flags: iface.link_flags.bits(),
+                    link_flags: iface.link_flags,
                     mode_status: None,
                 },
             );
@@ -198,5 +133,23 @@ impl NetlinkService {
     ) -> Result<()> {
         let route_interface = interface.to_owned().into();
         self.route_mgr.set_link_state(&route_interface, state).await
+    }
+
+    pub async fn set_interface_mode(
+        &self,
+        interface: &NetlinkInterface,
+        mode: NetlinkInterfaceMode,
+    ) -> Result<()> {
+        let wiphy_interface = self
+            .wiphy_mgr
+            .get_wiphy_interfaces()
+            .await?
+            .into_iter()
+            .find(|x| x.index == interface.index)
+            .ok_or(anyhow!("Cannot set mode for interface: {:?}", interface))?;
+
+        self.wiphy_mgr
+            .set_wiphy_interface_mode(&wiphy_interface, mode.try_into()?)
+            .await
     }
 }

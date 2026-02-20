@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use anyhow::Result;
 use futures_util::TryStreamExt;
 use tokio::task::JoinHandle;
-use wl_nl80211::{Nl80211Attr, Nl80211IfMode, Nl80211InterfaceType};
+use wl_nl80211::{
+    Nl80211Attr, Nl80211IfMode, Nl80211Interface, Nl80211InterfaceType, Nl80211NewInterface,
+};
 use wl_nl80211::{Nl80211Handle, Nl80211Message};
 
 #[derive(Debug, Clone)]
@@ -136,6 +138,35 @@ impl WiphyManager {
             .build();
         let mut result = self.nl80211.interface().set(attrs).execute().await;
         result.try_next().await?;
+        Ok(())
+    }
+
+    pub async fn create_wiphy_interface(
+        &self,
+        wiphy_dev: &WiphyDevice,
+        iftype: Nl80211InterfaceType,
+        name: String,
+    ) -> Result<()> {
+        self.nl80211
+            .interface()
+            .add(Nl80211NewInterface::new(wiphy_dev.phy_index, iftype, name).build())
+            .execute()
+            .await
+            .try_next()
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn delete_wiphy_interface(&self, wiphy_iface: &WiphyInterface) -> Result<()> {
+        self.nl80211
+            .interface()
+            .delete(Nl80211Interface::new(wiphy_iface.index).build())
+            .execute()
+            .await
+            .try_next()
+            .await?;
+
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-runasroot := `echo ${RUNASROOT:-doas}`
+runasroot := 'doas'
 
 run-dev: build-dev
     cargo run
